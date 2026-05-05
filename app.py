@@ -1,39 +1,18 @@
-from supabase import create_client
+import streamlit as st
 import pandas as pd
-
 from supabase import create_client
+
+# ================= CONFIG SUPABASE =================
 
 SUPABASE_URL = "https://llaikgnepnvppqdaujbg.supabase.co"
 SUPABASE_KEY = "sb_publishable_Zp_d7qXsU9Ir7y2TOOyJsQ_3tnCYhKd"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-import streamlit as st
-import pandas as pd
-import json
-import os
-
-# ---------------- FUNÇÕES JSON ----------------
-
-def carregar_dados():
-    if os.path.exists("dados.json"):
-        with open("dados.json", "r") as f:
-            return json.load(f)
-    return {"lojas": [], "funcionarios": [], "usuarios": {"admin": "123"}}
-
-def salvar_dados():
-    with open("dados.json", "w") as f:
-        json.dump(st.session_state["dados"], f, indent=4)
-
-# ---------------- INICIALIZA ----------------
-
-if "dados" not in st.session_state:
-    st.session_state["dados"] = carregar_dados()
+# ================= LOGIN =================
 
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
-
-# ---------------- LOGIN ----------------
 
 def login():
     st.title("🔐 Login")
@@ -42,7 +21,9 @@ def login():
     senha = st.text_input("Senha", type="password")
 
     if st.button("Entrar"):
-        if user in st.session_state["dados"]["usuarios"] and st.session_state["dados"]["usuarios"][user] == senha:
+        res = supabase.table("usuarios").select("*").eq("usuario", user).execute()
+
+        if res.data and res.data[0]["senha"] == senha:
             st.session_state["logado"] = True
             st.rerun()
         else:
@@ -52,7 +33,7 @@ if not st.session_state["logado"]:
     login()
     st.stop()
 
-# ---------------- MENU ----------------
+# ================= MENU =================
 
 pagina = st.sidebar.radio(
     "MENU",
@@ -65,41 +46,48 @@ pagina = st.sidebar.radio(
     ]
 )
 
+# ================= FUNÇÃO BUSCAR DADOS =================
+
+def get_lojas():
+    res = supabase.table("lojas").select("*").execute()
+    return pd.DataFrame(res.data)
+
+def get_funcionarios():
+    res = supabase.table("funcionarios").select("*").execute()
+    return pd.DataFrame(res.data)
+
 # ================= FOLHA =================
 
 if pagina == "📊 Gerar Folha de Pagamento":
 
     st.title("Folha de Pagamento")
 
-    df_func = pd.DataFrame(st.session_state["dados"]["funcionarios"])
-    df_loja = pd.DataFrame(st.session_state["dados"]["lojas"])
+    df_lojas = get_lojas()
+    df_func = get_funcionarios()
 
     if df_func.empty:
         st.warning("Cadastre funcionários primeiro")
         st.stop()
 
-    loja_sel = st.selectbox("Selecione a loja", df_func["Loja"].unique())
+    df = df_func.merge(df_lojas, left_on="loja_id", right_on="id")
 
-    df_filtrado = df_func[df_func["Loja"] == loja_sel]
+    loja_sel = st.selectbox("Selecione a loja", df["nome_loja"].unique())
 
-    funcionario = st.selectbox("Funcionário", df_filtrado["Nome"])
+    df_filtrado = df[df["nome_loja"] == loja_sel]
 
-    dados = df_filtrado[df_filtrado["Nome"] == funcionario].iloc[0]
+    funcionario = st.selectbox("Funcionário", df_filtrado["nome"])
 
-    empresa = df_loja[df_loja["Loja"] == loja_sel]
+    dados = df_filtrado[df_filtrado["nome"] == funcionario].iloc[0]
 
-    if not empresa.empty:
-        empresa = empresa.iloc[0]
-        st.write("Empresa:", empresa["Empresa"])
-        st.write("CNPJ:", empresa["CNPJ"])
-
-    st.write("Cargo:", dados["Cargo"])
-    st.write("Salário Base:", dados["Salario"])
+    st.write("Empresa:", dados["empresa"])
+    st.write("CNPJ:", dados["cnpj"])
+    st.write("Cargo:", dados["cargo"])
+    st.write("Salário Base:", dados["salario"])
 
     comissao = st.number_input("Comissão", 0.0)
     bonus = st.number_input("Bônus", 0.0)
 
-    bruto = dados["Salario"] + comissao + bonus
+    bruto = dados["salario"] + comissao + bonus
 
     def calcular_inss(salario):
         total = 0
@@ -135,27 +123,28 @@ if pagina == "🏪 Cadastro Loja":
     cnpj = st.text_input("CNPJ")
 
     if st.button("Salvar Loja"):
-        st.session_state["dados"]["lojas"].append({
-            "Loja": loja,
-            "Empresa": empresa,
-            "CNPJ": cnpj
-        })
-        salvar_dados()
+        supabase.table("lojas").insert({
+            "nome_loja": loja,
+            "empresa": empresa,
+            "cnpj": cnpj
+        }).execute()
+
         st.success("Salvo!")
         st.rerun()
 
     st.markdown("---")
 
-    for i, row in enumerate(st.session_state["dados"]["lojas"]):
+    df_lojas = get_lojas()
+
+    for _, row in df_lojas.iterrows():
         col1, col2, col3, col4 = st.columns([2,2,2,1])
 
-        col1.write(row["Loja"])
-        col2.write(row["Empresa"])
-        col3.write(row["CNPJ"])
+        col1.write(row["nome_loja"])
+        col2.write(row["empresa"])
+        col3.write(row["cnpj"])
 
-        if col4.button("❌", key=f"del_loja_{i}"):
-            st.session_state["dados"]["lojas"].pop(i)
-            salvar_dados()
+        if col4.button("❌", key=f"del_loja_{row['id']}"):
+            supabase.table("lojas").delete().eq("id", row["id"]).execute()
             st.rerun()
 
 # ================= CADASTRO FUNCIONARIO =================
@@ -164,41 +153,44 @@ if pagina == "👤 Cadastro Funcionário":
 
     st.title("Cadastro de Funcionário")
 
-    lojas = [l["Loja"] for l in st.session_state["dados"]["lojas"]]
+    df_lojas = get_lojas()
 
-    if not lojas:
+    if df_lojas.empty:
         st.warning("Cadastre uma loja primeiro")
         st.stop()
 
-    loja = st.selectbox("Loja", lojas)
+    loja_sel = st.selectbox("Loja", df_lojas["nome_loja"])
+    loja_id = df_lojas[df_lojas["nome_loja"] == loja_sel]["id"].values[0]
+
     nome = st.text_input("Nome")
     cargo = st.text_input("Cargo")
     salario = st.number_input("Salário")
 
     if st.button("Salvar Funcionário"):
-        st.session_state["dados"]["funcionarios"].append({
-            "Loja": loja,
-            "Nome": nome,
-            "Cargo": cargo,
-            "Salario": salario
-        })
-        salvar_dados()
+        supabase.table("funcionarios").insert({
+            "loja_id": int(loja_id),
+            "nome": nome,
+            "cargo": cargo,
+            "salario": salario
+        }).execute()
+
         st.success("Salvo!")
         st.rerun()
 
     st.markdown("---")
 
-    for i, row in enumerate(st.session_state["dados"]["funcionarios"]):
+    df_func = get_funcionarios()
+
+    for _, row in df_func.iterrows():
         col1, col2, col3, col4, col5 = st.columns([2,2,2,2,1])
 
-        col1.write(row["Loja"])
-        col2.write(row["Nome"])
-        col3.write(row["Cargo"])
-        col4.write(row["Salario"])
+        col1.write(row["loja_id"])
+        col2.write(row["nome"])
+        col3.write(row["cargo"])
+        col4.write(row["salario"])
 
-        if col5.button("❌", key=f"del_func_{i}"):
-            st.session_state["dados"]["funcionarios"].pop(i)
-            salvar_dados()
+        if col5.button("❌", key=f"del_func_{row['id']}"):
+            supabase.table("funcionarios").delete().eq("id", row["id"]).execute()
             st.rerun()
 
 # ================= CADASTRO USUARIO =================
@@ -211,15 +203,18 @@ if pagina == "🔐 Cadastro Usuário":
     senha = st.text_input("Senha", type="password")
 
     if st.button("Salvar"):
-        st.session_state["dados"]["usuarios"][user] = senha
-        salvar_dados()
+        supabase.table("usuarios").insert({
+            "usuario": user,
+            "senha": senha
+        }).execute()
+
         st.success("Usuário criado!")
         st.rerun()
 
-    st.subheader("Usuários")
+    res = supabase.table("usuarios").select("*").execute()
 
-    for u in st.session_state["dados"]["usuarios"]:
-        st.write(u)
+    for u in res.data:
+        st.write(u["usuario"])
 
 # ================= FOLHA DE PONTO =================
 
@@ -236,6 +231,3 @@ if pagina == "📄 Folha de Ponto":
         st.dataframe(df)
 
         st.success("Planilha carregada!")
-
-response = supabase.table("lojas").select("*").execute()
-st.write(response.data)
