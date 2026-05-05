@@ -233,3 +233,6 @@ if pagina == "📄 Folha de Ponto":
         st.dataframe(df)
 
         st.success("Planilha carregada!")
+
+response = supabase.table("lojas").select("*").execute()
+st.write(response.data)
