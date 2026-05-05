@@ -1,3 +1,10 @@
+from supabase import create_client
+import pandas as pd
+
+SUPABASE_URL=https://llaikgnepnvppqdaujbg.supabase.co
+SUPABASE_KEY=sb_publishable_Zp_d7qXsU9Ir7y2TOOyJsQ_3tnCYhKd
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 import streamlit as st
 import pandas as pd
 import json
