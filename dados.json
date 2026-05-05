@@ -1,0 +1,7 @@
+{
+  "lojas": [],
+  "funcionarios": [],
+  "usuarios": {
+    "admin": "123"
+  }
+}
