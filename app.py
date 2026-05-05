@@ -47,9 +47,15 @@ def login():
         st.error("Login inválido")
 
 
-if not st.session_state["logado"]:
-    login()
-    st.stop()
+def log_acao(acao, tabela, registro_id=None, payload=None):
+    if not st.session_state.get("auditoria_habilitada", None):
+        st.session_state["auditoria_habilitada"] = tabela_existe("auditoria_logs")
+    if not st.session_state["auditoria_habilitada"]:
+        return
+    try:
+        supabase.table("auditoria_logs").insert({"usuario": st.session_state["usuario"], "acao": acao, "tabela": tabela, "registro_id": str(registro_id) if registro_id else None, "payload": payload or {}}).execute()
+    except Exception:
+        st.session_state["auditoria_habilitada"] = False
 
 menu = ["📊 Folha", "🏷️ Cargos", "🏪 Lojas", "👤 Funcionários", "📄 Ponto", "📑 Documentos", "📧 Envio", "🔐 Usuários"]
 pagina = st.sidebar.radio("MENU", menu)
