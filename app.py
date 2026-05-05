@@ -1,23 +1,27 @@
 import streamlit as st
 import pandas as pd
+import json
+import os
 
-# ---------------- ESTADO INICIAL ----------------
+# ---------------- FUNÇÕES JSON ----------------
+
+def carregar_dados():
+    if os.path.exists("dados.json"):
+        with open("dados.json", "r") as f:
+            return json.load(f)
+    return {"lojas": [], "funcionarios": [], "usuarios": {"admin": "123"}}
+
+def salvar_dados():
+    with open("dados.json", "w") as f:
+        json.dump(st.session_state["dados"], f, indent=4)
+
+# ---------------- INICIALIZA ----------------
+
+if "dados" not in st.session_state:
+    st.session_state["dados"] = carregar_dados()
 
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
-
-if "usuarios" not in st.session_state:
-    st.session_state["usuarios"] = {"admin": "123"}
-
-if "lojas" not in st.session_state:
-    st.session_state["lojas"] = pd.DataFrame(
-        columns=["Loja", "Empresa", "CNPJ"]
-    )
-
-if "funcionarios" not in st.session_state:
-    st.session_state["funcionarios"] = pd.DataFrame(
-        columns=["Loja", "Nome", "Cargo", "Salario"]
-    )
 
 # ---------------- LOGIN ----------------
 
@@ -28,7 +32,7 @@ def login():
     senha = st.text_input("Senha", type="password")
 
     if st.button("Entrar"):
-        if user in st.session_state["usuarios"] and st.session_state["usuarios"][user] == senha:
+        if user in st.session_state["dados"]["usuarios"] and st.session_state["dados"]["usuarios"][user] == senha:
             st.session_state["logado"] = True
             st.rerun()
         else:
@@ -57,8 +61,8 @@ if pagina == "📊 Gerar Folha de Pagamento":
 
     st.title("Folha de Pagamento")
 
-    df_func = st.session_state["funcionarios"]
-    df_loja = st.session_state["lojas"]
+    df_func = pd.DataFrame(st.session_state["dados"]["funcionarios"])
+    df_loja = pd.DataFrame(st.session_state["dados"]["lojas"])
 
     if df_func.empty:
         st.warning("Cadastre funcionários primeiro")
@@ -87,7 +91,6 @@ if pagina == "📊 Gerar Folha de Pagamento":
 
     bruto = dados["Salario"] + comissao + bonus
 
-    # INSS
     def calcular_inss(salario):
         total = 0
         total += min(salario, 1412) * 0.075
@@ -117,20 +120,23 @@ if pagina == "🏪 Cadastro Loja":
 
     st.title("Cadastro de Loja")
 
-    df = st.session_state["lojas"]
-
     loja = st.text_input("Nome da Loja")
     empresa = st.text_input("Empresa")
     cnpj = st.text_input("CNPJ")
 
     if st.button("Salvar Loja"):
-        novo = pd.DataFrame([[loja, empresa, cnpj]], columns=df.columns)
-        st.session_state["lojas"] = pd.concat([df, novo], ignore_index=True)
+        st.session_state["dados"]["lojas"].append({
+            "Loja": loja,
+            "Empresa": empresa,
+            "CNPJ": cnpj
+        })
+        salvar_dados()
         st.success("Salvo!")
+        st.rerun()
 
     st.markdown("---")
 
-    for i, row in df.iterrows():
+    for i, row in enumerate(st.session_state["dados"]["lojas"]):
         col1, col2, col3, col4 = st.columns([2,2,2,1])
 
         col1.write(row["Loja"])
@@ -138,7 +144,8 @@ if pagina == "🏪 Cadastro Loja":
         col3.write(row["CNPJ"])
 
         if col4.button("❌", key=f"del_loja_{i}"):
-            st.session_state["lojas"] = df.drop(i).reset_index(drop=True)
+            st.session_state["dados"]["lojas"].pop(i)
+            salvar_dados()
             st.rerun()
 
 # ================= CADASTRO FUNCIONARIO =================
@@ -147,10 +154,9 @@ if pagina == "👤 Cadastro Funcionário":
 
     st.title("Cadastro de Funcionário")
 
-    df = st.session_state["funcionarios"]
-    lojas = st.session_state["lojas"]["Loja"]
+    lojas = [l["Loja"] for l in st.session_state["dados"]["lojas"]]
 
-    if len(lojas) == 0:
+    if not lojas:
         st.warning("Cadastre uma loja primeiro")
         st.stop()
 
@@ -160,13 +166,19 @@ if pagina == "👤 Cadastro Funcionário":
     salario = st.number_input("Salário")
 
     if st.button("Salvar Funcionário"):
-        novo = pd.DataFrame([[loja, nome, cargo, salario]], columns=df.columns)
-        st.session_state["funcionarios"] = pd.concat([df, novo], ignore_index=True)
+        st.session_state["dados"]["funcionarios"].append({
+            "Loja": loja,
+            "Nome": nome,
+            "Cargo": cargo,
+            "Salario": salario
+        })
+        salvar_dados()
         st.success("Salvo!")
+        st.rerun()
 
     st.markdown("---")
 
-    for i, row in df.iterrows():
+    for i, row in enumerate(st.session_state["dados"]["funcionarios"]):
         col1, col2, col3, col4, col5 = st.columns([2,2,2,2,1])
 
         col1.write(row["Loja"])
@@ -175,7 +187,8 @@ if pagina == "👤 Cadastro Funcionário":
         col4.write(row["Salario"])
 
         if col5.button("❌", key=f"del_func_{i}"):
-            st.session_state["funcionarios"] = df.drop(i).reset_index(drop=True)
+            st.session_state["dados"]["funcionarios"].pop(i)
+            salvar_dados()
             st.rerun()
 
 # ================= CADASTRO USUARIO =================
@@ -188,12 +201,14 @@ if pagina == "🔐 Cadastro Usuário":
     senha = st.text_input("Senha", type="password")
 
     if st.button("Salvar"):
-        st.session_state["usuarios"][user] = senha
+        st.session_state["dados"]["usuarios"][user] = senha
+        salvar_dados()
         st.success("Usuário criado!")
+        st.rerun()
 
     st.subheader("Usuários")
 
-    for u in st.session_state["usuarios"]:
+    for u in st.session_state["dados"]["usuarios"]:
         st.write(u)
 
 # ================= FOLHA DE PONTO =================
@@ -210,4 +225,4 @@ if pagina == "📄 Folha de Ponto":
         st.write("Prévia:")
         st.dataframe(df)
 
-        st.success("Planilha carregada com sucesso!")
+        st.success("Planilha carregada!")
