@@ -48,3 +48,6 @@ create table if not exists auditoria_logs (
     payload jsonb,
     created_at timestamptz default now()
 );
+
+alter table if exists usuarios
+    add column if not exists tipo text default 'USER';

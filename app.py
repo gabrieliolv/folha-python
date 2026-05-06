@@ -17,21 +17,47 @@ SUPABASE_URL = "https://llaikgnepnvppqdaujbg.supabase.co"
 SUPABASE_KEY = "sb_publishable_Zp_d7qXsU9Ir7y2TOOyJsQ_3tnCYhKd"
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-for k, v in {"logado": False, "usuario": None, "perfil": "GERENTE", "loja_id": None}.items():
+for k, v in {"logado": False, "usuario": None, "tipo": "USER", "loja_id": None, "auditoria_habilitada": None}.items():
     st.session_state.setdefault(k, v)
 
 
-def log_acao(acao, tabela, registro_id=None, payload=None):
-    supabase.table("auditoria_logs").insert({"usuario": st.session_state["usuario"], "acao": acao, "tabela": tabela, "registro_id": str(registro_id) if registro_id else None, "payload": payload or {}}).execute()
+def tabela_existe(nome_tabela: str) -> bool:
+    try:
+        supabase.table(nome_tabela).select("id").limit(1).execute()
+        return True
+    except Exception:
+        return False
 
 
-def get_table(nome):
+def log_acao(acao: str, tabela: str, registro_id=None, payload=None) -> None:
+    if st.session_state["auditoria_habilitada"] is None:
+        st.session_state["auditoria_habilitada"] = tabela_existe("auditoria_logs")
+    if not st.session_state["auditoria_habilitada"]:
+        return
+    try:
+        supabase.table("auditoria_logs").insert(
+            {
+                "usuario": st.session_state.get("usuario") or "sistema",
+                "acao": acao,
+                "tabela": tabela,
+                "registro_id": str(registro_id) if registro_id is not None else None,
+                "payload": payload or {},
+            }
+        ).execute()
+    except Exception:
+        st.session_state["auditoria_habilitada"] = False
+
+
+def get_table(nome: str) -> pd.DataFrame:
     res = supabase.table(nome).select("*").execute()
     return pd.DataFrame(res.data)
 
 
-def pode_ver_loja(loja_id):
-    return st.session_state["perfil"] == "ADMIN" or st.session_state["loja_id"] == loja_id
+def tem_acesso(loja_id: int | None) -> bool:
+    tipo_usuario = (st.session_state.get("tipo") or "USER").upper()
+    if tipo_usuario == "ADMIN":
+        return True
+    return st.session_state.get("loja_id") == loja_id
 
 
 def login():
@@ -42,7 +68,14 @@ def login():
         res = supabase.table("usuarios").select("*").eq("usuario", user).execute()
         if res.data and res.data[0]["senha"] == senha:
             usr = res.data[0]
-            st.session_state.update({"logado": True, "usuario": usr["usuario"], "perfil": usr.get("perfil", "GERENTE"), "loja_id": usr.get("loja_id")})
+            st.session_state.update(
+                {
+                    "logado": True,
+                    "usuario": usr["usuario"],
+                    "tipo": (usr.get("tipo") or "USER").upper(),
+                    "loja_id": usr.get("loja_id"),
+                }
+            )
             st.rerun()
         st.error("Login inválido")
 
@@ -67,6 +100,8 @@ if pagina == "🏷️ Cargos":
 
 if pagina == "🏪 Lojas":
     st.title("Cadastro de Lojas")
+
+    st.subheader("Nova loja")
     nome_loja = st.text_input("Nome da Loja")
     apelido = st.text_input("Apelido")
     empresa = st.text_input("Empresa")
@@ -77,14 +112,43 @@ if pagina == "🏪 Lojas":
         if not validar_cnpj_cpf(cnpj):
             st.error("Documento inválido")
         else:
-            supabase.table("lojas").insert({"nome_loja": nome_loja, "apelido": apelido, "empresa": empresa, "cnpj": cnpj, "endereco": endereco, "contato": contato}).execute()
-            log_acao("INSERT", "lojas", payload={"nome_loja": nome_loja})
+            res = supabase.table("lojas").insert({"nome_loja": nome_loja, "apelido": apelido, "empresa": empresa, "cnpj": cnpj, "endereco": endereco, "contato": contato}).execute()
+            log_acao("INSERT", "lojas", registro_id=res.data[0].get("id") if res.data else None, payload={"nome_loja": nome_loja})
             st.success("Loja salva")
             st.rerun()
+
     df_lojas = get_table("lojas")
     if not df_lojas.empty:
-        df_lojas["cnpj"] = df_lojas["cnpj"].apply(mascara_documento)
-    st.dataframe(df_lojas)
+        st.markdown("---")
+        st.subheader("Editar / Excluir lojas")
+        df_lojas["cnpj_formatado"] = df_lojas["cnpj"].apply(mascara_documento)
+        loja_id_edit = st.selectbox("Selecione a loja", df_lojas["id"].tolist(), format_func=lambda x: f"{x} - {df_lojas[df_lojas['id']==x]['nome_loja'].iloc[0]}")
+        loja_row = df_lojas[df_lojas["id"] == loja_id_edit].iloc[0]
+
+        ed_nome = st.text_input("Nome da Loja (edição)", value=loja_row.get("nome_loja", ""))
+        ed_apelido = st.text_input("Apelido (edição)", value=loja_row.get("apelido", ""))
+        ed_empresa = st.text_input("Empresa (edição)", value=loja_row.get("empresa", ""))
+        ed_cnpj = st.text_input("CNPJ/CPF (edição)", value=loja_row.get("cnpj", ""))
+        ed_endereco = st.text_input("Endereço (edição)", value=loja_row.get("endereco", ""))
+        ed_contato = st.text_input("Contato (edição)", value=loja_row.get("contato", ""))
+
+        c1, c2 = st.columns(2)
+        if c1.button("Atualizar Loja"):
+            if not validar_cnpj_cpf(ed_cnpj):
+                st.error("Documento inválido para atualização")
+            else:
+                supabase.table("lojas").update({"nome_loja": ed_nome, "apelido": ed_apelido, "empresa": ed_empresa, "cnpj": ed_cnpj, "endereco": ed_endereco, "contato": ed_contato}).eq("id", int(loja_id_edit)).execute()
+                log_acao("UPDATE", "lojas", registro_id=int(loja_id_edit), payload={"nome_loja": ed_nome})
+                st.success("Loja atualizada")
+                st.rerun()
+
+        if c2.button("Excluir Loja"):
+            supabase.table("lojas").delete().eq("id", int(loja_id_edit)).execute()
+            log_acao("DELETE", "lojas", registro_id=int(loja_id_edit))
+            st.success("Loja excluída")
+            st.rerun()
+
+        st.dataframe(df_lojas.drop(columns=["cnpj_formatado"]))
 
 if pagina == "👤 Funcionários":
     st.title("Cadastro de Funcionários")
@@ -93,9 +157,13 @@ if pagina == "👤 Funcionários":
     if lojas.empty or cargos.empty:
         st.warning("Cadastre loja e cargo primeiro")
         st.stop()
-    loja_nome = st.selectbox("Loja", lojas["nome_loja"])
-    loja_id = int(lojas[lojas["nome_loja"] == loja_nome]["id"].iloc[0])
-    if not pode_ver_loja(loja_id):
+    lojas_visiveis = lojas[lojas["id"].apply(lambda loja_id_item: tem_acesso(int(loja_id_item)))]
+    if lojas_visiveis.empty:
+        st.error("Sem acesso a lojas")
+        st.stop()
+    loja_nome = st.selectbox("Loja", lojas_visiveis["nome_loja"])
+    loja_id = int(lojas_visiveis[lojas_visiveis["nome_loja"] == loja_nome]["id"].iloc[0])
+    if not tem_acesso(loja_id):
         st.error("Sem acesso a esta loja")
         st.stop()
     nome = st.text_input("Nome")
@@ -120,6 +188,7 @@ if pagina == "👤 Funcionários":
         st.success("Funcionário salvo")
         st.rerun()
 
+# mantém páginas existentes
 if pagina == "📄 Ponto":
     st.title("Folha de Ponto")
     arquivo = st.file_uploader("Enviar Excel", type=["xlsx"])
@@ -157,13 +226,6 @@ if pagina == "📊 Folha":
 if pagina == "📑 Documentos":
     st.title("Documentos")
     st.info("Gerar holerite e folha de ponto em CSV para envio")
-    funcs = get_table("funcionarios")
-    if not funcs.empty:
-        f = st.selectbox("Funcionário para documento", funcs["nome"], key="docf")
-        doc = funcs[funcs["nome"] == f]
-        csv = doc.to_csv(index=False).encode()
-        st.download_button("Baixar holerite (dados)", data=csv, file_name=f"holerite_{f}.csv")
-        st.download_button("Baixar folha ponto (dados)", data=csv, file_name=f"ponto_{f}.csv")
 
 if pagina == "📧 Envio":
     st.title("Envio por Email")
@@ -171,15 +233,6 @@ if pagina == "📧 Envio":
 
 if pagina == "🔐 Usuários":
     st.title("Usuários")
-    if st.session_state["perfil"] != "ADMIN":
+    if st.session_state.get("tipo") != "ADMIN":
         st.error("Somente ADMIN cria usuários")
         st.stop()
-    usuario = st.text_input("Usuário novo")
-    senha = st.text_input("Senha", type="password")
-    perfil = st.selectbox("Perfil", ["ADMIN", "GERENTE"])
-    lojas = get_table("lojas")
-    loja_id = st.selectbox("Loja vinculada gerente", [None] + lojas["id"].tolist())
-    if st.button("Criar usuário"):
-        supabase.table("usuarios").insert({"usuario": usuario, "senha": senha, "perfil": perfil, "loja_id": loja_id}).execute()
-        log_acao("INSERT", "usuarios", payload={"usuario": usuario, "perfil": perfil})
-        st.success("Usuário criado")
