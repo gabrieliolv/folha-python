@@ -3,8 +3,8 @@ import streamlit as st
 from supabase import create_client
 from datetime import date
 
-SUPABASE_URL = "SUA_URL"
-SUPABASE_KEY = "SUA_KEY"
+SUPABASE_URL = "https://llaikgnepnvppqdaujbg.supabase.co"
+SUPABASE_KEY = "sb_publishable_Zp_d7qXsU9Ir7y2TOOyJsQ_3tnCYhKd"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
